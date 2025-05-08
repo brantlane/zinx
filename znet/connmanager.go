@@ -2,84 +2,124 @@ package znet
 
 import (
 	"errors"
-	"fmt"
-	"sync"
-	"zinx/ziface"
+	"strconv"
+
+	"github.com/aceld/zinx/ziface"
+	"github.com/aceld/zinx/zlog"
+	"github.com/aceld/zinx/zutils"
 )
 
-/*
-	连接管理模块
-*/
 type ConnManager struct {
-	connections map[uint32]ziface.IConnection //管理的连接信息
-	connLock    sync.RWMutex                  //读写连接的读写锁
+	connections zutils.ShardLockMaps
 }
 
-/*
-	创建一个链接管理
- */
-func NewConnManager() *ConnManager {
+func newConnManager() *ConnManager {
 	return &ConnManager{
-		connections:make(map[uint32] ziface.IConnection),
+		connections: zutils.NewShardLockMaps(),
 	}
 }
 
-//添加链接
 func (connMgr *ConnManager) Add(conn ziface.IConnection) {
-	//保护共享资源Map 加写锁
-	connMgr.connLock.Lock()
-	defer connMgr.connLock.Unlock()
 
-	//将conn连接添加到ConnMananger中
-	connMgr.connections[conn.GetConnID()] = conn
+	connMgr.connections.Set(conn.GetConnIdStr(), conn) // 将conn连接添加到ConnManager中
 
-	fmt.Println("connection add to ConnManager successfully: conn num = ", connMgr.Len())
+	zlog.Ins().DebugF("connection add to ConnManager successfully: conn num = %d", connMgr.Len())
 }
 
-//删除连接
 func (connMgr *ConnManager) Remove(conn ziface.IConnection) {
-	//保护共享资源Map 加写锁
-	connMgr.connLock.Lock()
-	defer connMgr.connLock.Unlock()
 
-	//删除连接信息
-	delete(connMgr.connections, conn.GetConnID())
+	connMgr.connections.Remove(conn.GetConnIdStr()) // 删除连接信息
 
-	fmt.Println("connection Remove ConnID=",conn.GetConnID(), " successfully: conn num = ", connMgr.Len())
+	zlog.Ins().DebugF("connection Remove ConnID=%d successfully: conn num = %d", conn.GetConnID(), connMgr.Len())
 }
 
-//利用ConnID获取链接
-func (connMgr *ConnManager) Get(connID uint32) (ziface.IConnection, error) {
-	//保护共享资源Map 加读锁
-	connMgr.connLock.RLock()
-	defer connMgr.connLock.RUnlock()
+func (connMgr *ConnManager) Get(connID uint64) (ziface.IConnection, error) {
 
-	if conn, ok := connMgr.connections[connID]; ok {
-		return conn, nil
-	} else {
-		return nil, errors.New("connection not found")
+	strConnId := strconv.FormatUint(connID, 10)
+	if conn, ok := connMgr.connections.Get(strConnId); ok {
+		return conn.(ziface.IConnection), nil
 	}
+
+	return nil, errors.New("connection not found")
 }
 
-//获取当前连接
+// Get2 It is recommended to use this method to obtain connection instances
+func (connMgr *ConnManager) Get2(strConnId string) (ziface.IConnection, error) {
+
+	if conn, ok := connMgr.connections.Get(strConnId); ok {
+		return conn.(ziface.IConnection), nil
+	}
+
+	return nil, errors.New("connection not found")
+}
+
 func (connMgr *ConnManager) Len() int {
-	return len(connMgr.connections)
+
+	length := connMgr.connections.Count()
+
+	return length
 }
 
-//清除并停止所有连接
 func (connMgr *ConnManager) ClearConn() {
-	//保护共享资源Map 加写锁
-	connMgr.connLock.Lock()
-	defer connMgr.connLock.Unlock()
 
-	//停止并删除全部的连接信息
-	for connID, conn := range connMgr.connections {
-		//停止
-		conn.Stop()
-		//删除
-		delete(connMgr.connections,connID)
+	// Stop and delete all connection information
+	for item := range connMgr.connections.IterBuffered() {
+		val := item.Val
+		if conn, ok := val.(ziface.IConnection); ok {
+			// stop will eventually trigger the deletion of the connection,
+			// no additional deletion is required
+			conn.Stop()
+		}
 	}
 
+	zlog.Ins().InfoF("Clear All Connections successfully: conn num = %d", connMgr.Len())
+}
 
-	fmt.Println("Clear All Connections successfully: conn num = ", connMgr.Len())
+func (connMgr *ConnManager) GetAllConnID() []uint64 {
+
+	strConnIdList := connMgr.connections.Keys()
+	ids := make([]uint64, 0, len(strConnIdList))
+
+	for _, strId := range strConnIdList {
+		connId, err := strconv.ParseUint(strId, 10, 64)
+		if err == nil {
+			ids = append(ids, connId)
+		} else {
+			zlog.Ins().InfoF("GetAllConnID Id: %d, error: %v", connId, err)
+		}
+	}
+
+	return ids
+}
+
+func (connMgr *ConnManager) GetAllConnIdStr() []string {
+	return connMgr.connections.Keys()
+}
+
+func (connMgr *ConnManager) Range(cb func(uint64, ziface.IConnection, interface{}) error, args interface{}) (err error) {
+
+	connMgr.connections.IterCb(func(key string, v interface{}) {
+		conn, _ := v.(ziface.IConnection)
+		connId, _ := strconv.ParseUint(key, 10, 64)
+		err = cb(connId, conn, args)
+		if err != nil {
+			zlog.Ins().InfoF("Range key: %v, v: %v, error: %v", key, v, err)
+		}
+	})
+
+	return err
+}
+
+// Range2 It is recommended to use this method to 'Range'
+func (connMgr *ConnManager) Range2(cb func(string, ziface.IConnection, interface{}) error, args interface{}) (err error) {
+
+	connMgr.connections.IterCb(func(key string, v interface{}) {
+		conn, _ := v.(ziface.IConnection)
+		err = cb(conn.GetConnIdStr(), conn, args)
+		if err != nil {
+			zlog.Ins().InfoF("Range2 key: %v, v: %v, error: %v", key, v, err)
+		}
+	})
+
+	return err
 }

@@ -1,14 +1,16 @@
+// @Title imessage.go
+// @Description Provides basic methods for messages
+// @Author Aceld - Thu Mar 11 10:32:29 CST 2019
 package ziface
 
-/*
-	将请求的一个消息封装到message中，定义抽象层接口
- */
+// IMessage Package ziface defines an abstract interface for encapsulating a request message into a message
 type IMessage interface {
-	GetDataLen() uint32	//获取消息数据段长度
-	GetMsgId() uint32	//获取消息ID
-	GetData() []byte	//获取消息内容
+	GetDataLen() uint32 // Gets the length of the message data segment(获取消息数据段长度)
+	GetMsgID() uint32   // Gets the ID of the message(获取消息ID)
+	GetData() []byte    // Gets the content of the message(获取消息内容)
+	GetRawData() []byte // Gets the raw data of the message(获取原始数据)
 
-	SetMsgId(uint32)	//设计消息ID
-	SetData([]byte)		//设计消息内容
-	SetDataLen(uint32)	//设置消息数据段长度
+	SetMsgID(uint32)   // Sets the ID of the message(设计消息ID)
+	SetData([]byte)    // Sets the content of the message(设计消息内容)
+	SetDataLen(uint32) // Sets the length of the message data segment(设置消息数据段长度)
 }
